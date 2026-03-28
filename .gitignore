@@ -1,0 +1,11 @@
+# Generated test file
+test.txt
+
+# Compiled binaries
+HW1_1
+HW1_2
+a.out
+create_test_file
+
+# Lock files
+.~lock.*

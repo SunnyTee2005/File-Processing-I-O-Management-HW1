@@ -1,0 +1,63 @@
+1. 為什麼需要 fclose(f1)？
+
+如果不關檔，你的檔案極有可能會殘缺不全，甚至佔用系統資源。
+
+C 語言的標準 I/O 函式庫（也就是你現在用的 fwrite）為了效能，會在 User Space（使用者空間）自己偷偷維護一個暫存區 (Buffer) 。當你呼叫 fwrite() 時，資料其實只是先被塞進這個暫存區，並沒有立刻跨越邊界送進作業系統 (Kernel) 裡。
+
+呼叫 fclose(f1) 時，它會在底層做兩件生死攸關的事 ：
+
+    Flush（沖刷）：強迫把 User Space 暫存區裡還沒寫出去的資料，全部推給作業系統。
+
+    Release（釋放）：關閉這個檔案的資料流 (stream)，並請作業系統回收與這個檔案綁定的資源 (File Descriptor)。
+
+雖然現代作業系統在你程式結束 (return 0) 時會強制幫你擦屁股關檔，但身為開發者，依賴 OS 來收尾是寫系統程式的大忌。
+
+
+作業系統 HW1：I/O 底層觀念與效能測試筆記
+1. FILE 與 fd (File Descriptor) 的本質差異
+
+    fd (File Descriptor)：
+
+        本質：作業系統 (OS) 認得的唯一 ID（就是個整數，例如 3）。
+
+        作用：代表 OS 內部檔案表的一個索引。呼叫 System Call (如 read, write, fsync) 時，必須傳入 fd，這會直接觸發權限切換，進入 Kernel Mode 讓 OS 操作硬體 。
+
+    FILE：
+
+        本質：C 語言標準函式庫 (<stdio.h>) 定義的結構體 (Struct) 。因為標頭檔內使用了 typedef，所以宣告時不需加上 struct 關鍵字。
+
+        作用：它是 fd 的「擴充包」。裡面除了偷偷存了底層的 fd，還自己維護了一塊位於 User Space 的「緩衝區 (Buffer)」。
+
+        轉換：可用 fileno(FILE *stream) 將 FILE 剝開，取出底層的 fd 。
+
+2. 寫入的兩道關卡：fclose() vs fsync()
+
+當你在 C 語言呼叫 fwrite() 時，資料其實只寫入了 FILE 結構體在 User Space 的緩衝區，根本還沒進到作業系統，更別說實體硬碟。要讓資料真正落地，必須過兩關：
+
+    第一關：fclose() 的 Flush 與 Release 
+
+        Flush (沖刷)：把 User Space 緩衝區的資料，推交給 OS 核心 (Kernel Space)。此時資料通常只抵達記憶體中的 Page Cache，若此時斷電，資料依然會遺失。
+
+        Release (釋放)：告訴 OS「這個檔案我用完了」，請 OS 回收 fd 號碼牌與相關資源。如果不釋放 (FD Leak)，程式遲早會因為把系統的 fd 額度耗盡而崩潰。
+
+    第二關：fsync() 的真・Flush 
+
+        功能：強迫 OS 把 Page Cache 裡屬於這個檔案的資料 (Dirty Pages)，立刻物理性地寫入實體磁碟。
+
+        特性：這是一個 Blocking (阻塞) 操作。程式會卡在這裡，直到硬碟回報「寫入完成」才會繼續往下執行。做嚴格的 I/O 效能測試時，計時結束點必須放在 fsync() 之後，否則測到的只是寫入 RAM 的時間。
+
+3. 快取陷阱與 drop_caches
+
+    Page Cache：Linux 為了加速，會把讀寫過的檔案暫存在實體記憶體 (RAM) 中 。
+
+    效能測試的致命傷：如果連續進行兩次讀取測試，第二次 OS 會直接從 RAM 給資料，速度會快上數十倍，導致「硬碟 I/O 測試」變成無效的「記憶體測試」。
+
+    解法：每次測試前，必須以 root 權限執行 echo 3 > /proc/sys/vm/drop_caches 。這會強制 OS 清空所有檔案系統的快取，確保接下來的 I/O 操作必須老老實實地去找實體硬碟拿資料。
+
+4. 為什麼 fwrite 不一次寫入 100MB？ (Stack Overflow)
+
+    如果宣告 char buffer[100 * 1024 * 1024];，這 100MB 會被要求配置在記憶體的 Stack (堆疊) 區段。
+
+    Linux 預設給單一 Process 的 Stack 大小通常只有 8MB。硬塞 100MB 會直接導致 Segmentation fault (core dumped)，程式強制死亡。
+
+    工程解法 (Chunking)：宣告一個符合系統分頁大小 (Page Size) 的小陣列（例如 4KB），利用迴圈重複呼叫 fwrite() 分批寫入，直到達到 100MB 的目標。

@@ -1,0 +1,62 @@
+===============================================================
+  HW1 Benchmark Results
+  File size: 100 MB | Page cache dropped before each test
+  Platform: Linux (Ubuntu VM)
+===============================================================
+
+---------------------------------------------------------------
+  HW1_1  (stdio API: fread / fwrite / fflush / fsync)
+---------------------------------------------------------------
+Test 1 - Sequential Read          :     33,335 us  (~0.033 s)
+Test 2 - Sequential Write         :     76,543 us  (~0.077 s)
+Test 3 - Random Read              :    547,965 us  (~0.548 s)
+Test 4 - Random Buffered Write    :    455,187 us  (~0.455 s)
+Test 5 - Random Synchronous Write :  9,384,983 us  (~9.385 s)
+
+---------------------------------------------------------------
+  HW1_2  (syscall API: read / write / lseek / fsync)
+---------------------------------------------------------------
+Test 1 - Sequential Read          :     22,933 us  (~0.023 s)
+Test 2 - Sequential Write         :    169,280 us  (~0.169 s)
+Test 3 - Random Read              :  8,105,902 us  (~8.106 s)
+Test 4 - Random Buffered Write    :    436,982 us  (~0.437 s)
+Test 5 - Random Synchronous Write :  8,960,671 us  (~8.961 s)
+
+---------------------------------------------------------------
+  Comparison (HW1_1 vs HW1_2)
+---------------------------------------------------------------
+Test              | HW1_1 (us)  | HW1_2 (us)  | Faster
+------------------+-------------+-------------+---------
+Seq Read          |      33,335 |      22,933 | HW1_2
+Seq Write         |      76,543 |     169,280 | HW1_1
+Random Read       |     547,965 |   8,105,902 | HW1_1
+Rand Buf Write    |     455,187 |     436,982 | HW1_2
+Rand Sync Write   |   9,384,983 |   8,960,671 | HW1_2
+
+---------------------------------------------------------------
+  Notes
+---------------------------------------------------------------
+- HW1_1 uses buffered I/O (stdio): data passes through a
+  user-space buffer before reaching the kernel page cache.
+- HW1_2 uses unbuffered I/O (syscalls): data goes directly
+  to the kernel page cache with each read()/write() call.
+
+- Seq Read: HW1_2 is faster because read() avoids stdio's
+  buffer management overhead for large sequential access.
+
+- Seq Write: HW1_1 is faster because fwrite() accumulates
+  2KB writes in a user-space buffer, reducing syscall count.
+  HW1_2 calls write() for every 2KB directly.
+
+- Random Read: HW1_1 is dramatically faster (~15x) because
+  stdio buffers larger chunks around each fseek(), so nearby
+  reads are served from user-space without extra syscalls.
+  HW1_2 issues a separate read() syscall for every access.
+
+- Rand Buf Write: Similar performance; both do 50k writes
+  then one fsync(). Small difference due to buffering.
+
+- Rand Sync Write: Both are slow and similar since fsync()
+  dominates — 50,000 disk flushes kill throughput regardless
+  of buffering strategy.
+===============================================================
